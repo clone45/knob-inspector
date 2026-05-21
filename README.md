@@ -8,6 +8,12 @@ circles on an image.
 
 No build step, no dependencies. One HTML file.
 
+## Try it
+
+**[knob-inspector live](https://clone45.github.io/knob-inspector/)** — hosted
+on GitHub Pages. Drop a knob image on the canvas, add a guide circle, drag the
+image until the two line up.
+
 ## Use cases
 
 - Comparing AI-generated knob renders against an ideal circle
@@ -15,9 +21,9 @@ No build step, no dependencies. One HTML file.
 - Measuring the outer radius of features in any image (in pixels)
 - Sanity-checking that exported sprites are actually centered in their canvas
 
-## Running it
+## Running it locally
 
-Open `index.html` in any modern browser. That's it.
+Clone the repo and open `index.html` in any modern browser. That's it.
 
 If you'd rather serve it locally:
 
