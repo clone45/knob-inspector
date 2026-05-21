@@ -180,6 +180,41 @@
     font-variant-numeric: tabular-nums;
   }
   .edit-panel input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
+  .detection-panel {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel-2);
+    padding: 0;
+    margin-top: 8px;
+    font-size: 11px;
+  }
+  .detection-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .detection-row:last-child { border-bottom: none; }
+  .detection-row .swatch-small {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 3px;
+  }
+  .detection-row .stats {
+    flex: 1;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .detection-row .stats .label {
+    color: var(--muted);
+  }
+  .detection-row .stats .bad {
+    color: #ffb86b;
+  }
   .swatch {
     width: 14px;
     height: 14px;
@@ -339,6 +374,13 @@
     <div class="row" style="margin-top:8px;">
       <button id="clearBtn" class="danger-outline" style="flex:1;">Clear all</button>
     </div>
+
+    <h2>Detection</h2>
+    <div class="row" style="margin-top:4px;">
+      <button id="detectBtn" class="accent-outline" style="flex:1;">Detect rings</button>
+    </div>
+    <p class="hint">Scans each guide circle's radius for the actual ring edge in the image. Place guides where rings <i>should</i> be, then run detection. Re-run after editing circles or loading a new image.</p>
+    <div class="detection-panel" id="detectionPanel" style="display:none;"></div>
   </aside>
 
   <div class="stage" id="stage">
@@ -380,6 +422,8 @@
   const editAlpha = document.getElementById('editAlpha');
   const editAlphaVal = document.getElementById('editAlphaVal');
   const editDoneBtn = document.getElementById('editDoneBtn');
+  const detectBtn = document.getElementById('detectBtn');
+  const detectionPanel = document.getElementById('detectionPanel');
 
   const state = {
     image: null,
@@ -397,6 +441,10 @@
     imageOffset: { x: 0, y: 0 },  // offset from canvas center
     drag: null,                   // { startX, startY, originX, originY }
     editingIdx: null,             // index into state.circles being edited
+    gray: null,                   // Float32Array grayscale of the source image
+    imageW: 0,
+    imageH: 0,
+    detections: null,             // [{circleIdx, samples_img:[{theta,r_img,x_img,y_img}], outliers_img}]
   };
 
   function setMode(m) {
@@ -518,6 +566,11 @@
       drawCircle(state.circles[i], c);
     }
 
+    if (state.detections) {
+      drawDetections(c);
+      renderDetectionPanel();
+    }
+
     if (state.editingIdx != null && state.circles[state.editingIdx]) {
       const sel = state.circles[state.editingIdx];
       ctx.save();
@@ -572,6 +625,257 @@
     return `rgba(${r},${g},${b},${a})`;
   }
 
+  // --- Ring detection ---
+
+  function prepareImageData(img) {
+    const off = document.createElement('canvas');
+    off.width = img.naturalWidth;
+    off.height = img.naturalHeight;
+    const octx = off.getContext('2d');
+    octx.drawImage(img, 0, 0);
+    let data;
+    try {
+      data = octx.getImageData(0, 0, off.width, off.height);
+    } catch (e) {
+      console.warn('Cannot read image pixels (tainted):', e);
+      state.gray = null;
+      return;
+    }
+    const n = off.width * off.height;
+    const gray = new Float32Array(n);
+    const d = data.data;
+    for (let i = 0; i < n; i++) {
+      gray[i] = 0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2];
+    }
+    state.gray = gray;
+    state.imageW = off.width;
+    state.imageH = off.height;
+  }
+
+  function sampleGray(x, y) {
+    if (x < 0 || y < 0 || x >= state.imageW - 1 || y >= state.imageH - 1) return null;
+    const x0 = Math.floor(x), y0 = Math.floor(y);
+    const fx = x - x0, fy = y - y0;
+    const w = state.imageW;
+    const i00 = y0 * w + x0;
+    return (
+      state.gray[i00]       * (1-fx)*(1-fy) +
+      state.gray[i00 + 1]   * fx    *(1-fy) +
+      state.gray[i00 + w]   * (1-fx)*fy +
+      state.gray[i00 + w+1] * fx    *fy
+    );
+  }
+
+  function detectEdgeAlongRay(cx, cy, theta, R, search) {
+    const cos = Math.cos(theta), sin = Math.sin(theta);
+    const step = 0.5;
+    const profile = [];
+    for (let t = -search; t <= search; t += step) {
+      const r = R + t;
+      profile.push(sampleGray(cx + r * cos, cy + r * sin));
+    }
+    // 3-tap smoothing
+    const smooth = profile.map((v, i) => {
+      if (v == null) return null;
+      const a = profile[i-1] ?? v;
+      const b = profile[i+1] ?? v;
+      return (a + v + b) / 3;
+    });
+    let bestI = -1, bestG = 0;
+    for (let i = 1; i < smooth.length; i++) {
+      const a = smooth[i-1], b = smooth[i];
+      if (a == null || b == null) continue;
+      const g = Math.abs(b - a);
+      if (g > bestG) { bestG = g; bestI = i; }
+    }
+    if (bestI < 0) return null;
+    const t = -search + bestI * step - step / 2;
+    return { r: R + t, gradient: bestG };
+  }
+
+  function median(arr) {
+    if (!arr.length) return 0;
+    const s = [...arr].sort((a, b) => a - b);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2;
+  }
+
+  function detectRings() {
+    if (!state.image) { flashDetect('Load an image first.'); return; }
+    if (!state.gray)  { flashDetect('Image pixels unreadable.'); return; }
+    if (state.circles.length === 0) { flashDetect('Place at least one guide circle first.'); return; }
+
+    const cx_img = (-state.imageOffset.x) / state.scale + state.imageW / 2;
+    const cy_img = (-state.imageOffset.y) / state.scale + state.imageH / 2;
+    const N_ANGLES = 72;
+    const results = [];
+
+    for (let idx = 0; idx < state.circles.length; idx++) {
+      const circle = state.circles[idx];
+      const R_img = circle.radius / state.scale;
+      const search = Math.max(15, R_img * 0.20);
+
+      const raw = [];
+      for (let i = 0; i < N_ANGLES; i++) {
+        const theta = (i / N_ANGLES) * Math.PI * 2;
+        const hit = detectEdgeAlongRay(cx_img, cy_img, theta, R_img, search);
+        if (!hit) continue;
+        raw.push({
+          theta,
+          r_img: hit.r,
+          x_img: cx_img + hit.r * Math.cos(theta),
+          y_img: cy_img + hit.r * Math.sin(theta),
+          gradient: hit.gradient,
+        });
+      }
+
+      if (raw.length === 0) {
+        results.push({ circleIdx: idx, samples_img: [], outliers_img: [] });
+        continue;
+      }
+
+      // weak-gradient filter
+      const maxG = Math.max(...raw.map(s => s.gradient));
+      const gThresh = maxG * 0.18;
+      let strong = raw.filter(s => s.gradient >= gThresh);
+      if (strong.length < 6) strong = raw;
+
+      // radius MAD outlier rejection (kills the indicator pointer / notches)
+      const med = median(strong.map(s => s.r_img));
+      const mad = median(strong.map(s => Math.abs(s.r_img - med)));
+      const rThresh = Math.max(2, 3 * mad);
+      const samples_img = [];
+      const outliers_img = [];
+      for (const s of strong) {
+        if (Math.abs(s.r_img - med) <= rThresh) samples_img.push(s);
+        else outliers_img.push(s);
+      }
+      for (const s of raw) {
+        if (s.gradient < gThresh) outliers_img.push(s);
+      }
+
+      results.push({ circleIdx: idx, samples_img, outliers_img });
+    }
+
+    state.detections = results;
+    renderDetectionPanel();
+    draw();
+  }
+
+  function clearDetections() {
+    if (!state.detections) return;
+    state.detections = null;
+    renderDetectionPanel();
+    draw();
+  }
+
+  function imgToCanvas(x_img, y_img) {
+    const c = centerPx();
+    return {
+      x: c.x + state.imageOffset.x + (x_img - state.imageW / 2) * state.scale,
+      y: c.y + state.imageOffset.y + (y_img - state.imageH / 2) * state.scale,
+    };
+  }
+
+  function statsFor(detection) {
+    if (!detection.samples_img.length) return null;
+    const c = centerPx();
+    const pts = detection.samples_img.map(s => imgToCanvas(s.x_img, s.y_img));
+    const radii = pts.map(p => Math.hypot(p.x - c.x, p.y - c.y));
+    const meanR = radii.reduce((a, b) => a + b, 0) / radii.length;
+    const meanX = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+    const meanY = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+    return {
+      offsetX: meanX - c.x,
+      offsetY: meanY - c.y,
+      meanR,
+      targetR: state.circles[detection.circleIdx]?.radius ?? 0,
+      ovality: (Math.max(...radii) - Math.min(...radii)) / 2,
+      count: pts.length,
+      outliers: detection.outliers_img.length,
+    };
+  }
+
+  function drawDetections(c) {
+    if (!state.detections) return;
+    for (const det of state.detections) {
+      const circle = state.circles[det.circleIdx];
+      if (!circle || det.samples_img.length === 0) continue;
+      const color = circle.color;
+      const pts = det.samples_img.map(s => imgToCanvas(s.x_img, s.y_img));
+
+      // closed polyline through detected samples
+      ctx.save();
+      ctx.strokeStyle = hexToRgba(color, 0.55);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+
+      // dots
+      ctx.save();
+      ctx.fillStyle = color;
+      for (const p of pts) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      // detected ring centroid as a small +
+      const s = statsFor(det);
+      if (s) {
+        const cxd = c.x + s.offsetX, cyd = c.y + s.offsetY;
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(cxd - 4, cyd); ctx.lineTo(cxd + 4, cyd);
+        ctx.moveTo(cxd, cyd - 4); ctx.lineTo(cxd, cyd + 4);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  function renderDetectionPanel() {
+    if (!state.detections || state.detections.length === 0) {
+      detectionPanel.style.display = 'none';
+      detectionPanel.innerHTML = '';
+      return;
+    }
+    detectionPanel.style.display = '';
+    const rows = state.detections.map((det, i) => {
+      const circle = state.circles[det.circleIdx];
+      if (!circle) return '';
+      if (!det.samples_img.length) {
+        return `<div class="detection-row">
+          <div class="swatch-small" style="background:${circle.color}"></div>
+          <div class="stats"><b>#${i+1}</b> <span class="bad">no edge detected</span></div>
+        </div>`;
+      }
+      const s = statsFor(det);
+      const rDelta = s.meanR - s.targetR;
+      const offMag = Math.hypot(s.offsetX, s.offsetY);
+      return `<div class="detection-row">
+        <div class="swatch-small" style="background:${circle.color}"></div>
+        <div class="stats">
+          <b>#${i+1}</b> <span class="label">center</span> (${s.offsetX.toFixed(1)}, ${s.offsetY.toFixed(1)}) px · |Δ| ${offMag.toFixed(1)}<br>
+          <span class="label">r</span> ${s.meanR.toFixed(1)} <span class="label">vs target</span> ${s.targetR.toFixed(1)} (Δ ${rDelta>=0?'+':''}${rDelta.toFixed(1)}) · <span class="label">oval</span> ±${s.ovality.toFixed(1)} px<br>
+          <span class="label">${s.count} samples${s.outliers ? ` · ${s.outliers} rejected` : ''}</span>
+        </div>
+      </div>`;
+    }).join('');
+    detectionPanel.innerHTML = rows;
+  }
+
+  function flashDetect(msg) {
+    detectionPanel.style.display = '';
+    detectionPanel.innerHTML = `<div class="detection-row"><div class="stats"><span class="bad">${msg}</span></div></div>`;
+  }
+
   function rebuildList() {
     circleList.innerHTML = '';
     state.circles.forEach((circle, idx) => {
@@ -599,6 +903,8 @@
     img.onload = () => {
       state.image = img;
       state.imageOffset = { x: 0, y: 0 };
+      prepareImageData(img);
+      clearDetections();
       updateCursor();
       draw();
     };
@@ -647,9 +953,13 @@
 
   clearBtn.addEventListener('click', () => {
     state.circles = [];
+    stopEditing();
+    clearDetections();
     rebuildList();
     draw();
   });
+
+  detectBtn.addEventListener('click', () => detectRings());
 
   circleList.addEventListener('click', (e) => {
     const btn = e.target.closest('button.danger-link');
@@ -661,6 +971,7 @@
       } else if (state.editingIdx != null && idx < state.editingIdx) {
         state.editingIdx -= 1;
       }
+      clearDetections();
       rebuildList();
       draw();
       return;
@@ -681,6 +992,7 @@
     const r = parseFloat(e.target.value);
     editRadiusNum.value = r.toFixed(1);
     updateEditing({ radius: r });
+    clearDetections();
   });
   editRadiusNum.addEventListener('input', (e) => {
     const r = parseFloat(e.target.value);
@@ -691,6 +1003,7 @@
     }
     editRadius.value = r;
     updateEditing({ radius: r });
+    clearDetections();
   });
   editColor.addEventListener('input', (e) => updateEditing({ color: e.target.value }));
   editStroke.addEventListener('input', (e) => {
@@ -799,6 +1112,7 @@
         editRadiusNum.max = r;
       }
       readout.textContent = `editing #${state.editingIdx + 1} · r = ${r.toFixed(1)} px · ⌀ ${(r * 2).toFixed(1)} px`;
+      clearDetections();
       rebuildList();
       draw();
     }
@@ -807,6 +1121,7 @@
   canvas.addEventListener('click', () => {
     if (state.mode !== 'circle' || !state.preview) return;
     state.circles.push({ ...state.preview });
+    clearDetections();
     rebuildList();
     setMode('move');
   });
