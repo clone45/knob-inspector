@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Knob Inspector</title>
+<style>
+  :root {
+    --bg: #1c1d22;
+    --panel: #25272e;
+    --panel-2: #2d3038;
+    --border: #383b44;
+    --text: #e6e7eb;
+    --muted: #9498a3;
+    --accent: #6fb3ff;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .app {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    height: 100vh;
+  }
+  .sidebar {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    padding: 16px;
+    overflow-y: auto;
+  }
+  .sidebar h1 {
+    font-size: 14px;
+    margin: 0 0 4px 0;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .sidebar h2 {
+    font-size: 11px;
+    margin: 18px 0 8px 0;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+  }
+  .sidebar p.hint {
+    color: var(--muted);
+    font-size: 11px;
+    margin: 8px 0 0 0;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+  }
+  .row label {
+    flex: 0 0 70px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .row input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+  }
+  .row .value {
+    flex: 0 0 44px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    font-size: 11px;
+  }
+  button {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font: inherit;
+  }
+  button:hover { background: #353944; }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #08111c;
+    font-weight: 600;
+  }
+  button.primary:hover { background: #8cc1ff; }
+  button.danger-link {
+    background: transparent;
+    border: none;
+    color: var(--danger);
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+  input[type="file"] { display: none; }
+  input[type="color"] {
+    width: 28px;
+    height: 22px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+    padding: 0;
+  }
+  .bg-options {
+    display: flex;
+    gap: 6px;
+  }
+  .bg-options button {
+    flex: 1;
+    padding: 6px 4px;
+    font-size: 11px;
+  }
+  .bg-options button.active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .circle-list {
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel-2);
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .circle-list:empty::before {
+    content: "No circles yet. Click the canvas to add one.";
+    display: block;
+    padding: 10px;
+    color: var(--muted);
+    font-size: 11px;
+    font-style: italic;
+  }
+  .circle-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .circle-item:hover { background: rgba(111,179,255,0.05); }
+  .circle-item.selected {
+    background: rgba(111,179,255,0.14);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  .circle-item:last-child { border-bottom: none; }
+  .edit-panel {
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: rgba(111,179,255,0.06);
+    padding: 10px;
+    margin-top: 8px;
+  }
+  .edit-panel .edit-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--accent);
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+  .edit-panel input[type="number"] {
+    width: 60px;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 3px 6px;
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+  }
+  .edit-panel input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
+  .swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .circle-item .radius {
+    flex: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .stage {
+    position: relative;
+    overflow: hidden;
+    background:
+      linear-gradient(45deg, #1a1b20 25%, transparent 25%),
+      linear-gradient(-45deg, #1a1b20 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #1a1b20 75%),
+      linear-gradient(-45deg, transparent 75%, #1a1b20 75%);
+    background-size: 20px 20px;
+    background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  }
+  canvas {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    cursor: default;
+  }
+  canvas.mode-move    { cursor: grab; }
+  canvas.mode-moving  { cursor: grabbing; }
+  canvas.mode-circle  { cursor: crosshair; }
+  button.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #08111c;
+    font-weight: 600;
+  }
+  button.accent-outline {
+    background: rgba(111, 179, 255, 0.08);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+    padding: 8px 10px;
+  }
+  button.accent-outline:hover {
+    background: rgba(111, 179, 255, 0.18);
+  }
+  button.danger-outline {
+    background: rgba(255, 107, 107, 0.06);
+    border-color: var(--danger);
+    color: var(--danger);
+    font-weight: 600;
+    padding: 8px 10px;
+  }
+  button.danger-outline:hover {
+    background: rgba(255, 107, 107, 0.16);
+  }
+  .stage .readout {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: rgba(0,0,0,0.55);
+    padding: 6px 10px;
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <h1>Knob Inspector</h1>
+    <p class="hint">Compare a knob image against perfectly round, perfectly centered guide circles.</p>
+
+    <h2>Image</h2>
+    <button class="primary" id="loadBtn" style="width:100%;">Load knob image…</button>
+    <input type="file" id="fileInput" accept="image/*" />
+
+    <div class="row">
+      <label>Scale</label>
+      <input type="range" id="scaleSlider" min="0.1" max="3" step="0.01" value="1" />
+      <span class="value" id="scaleValue">100%</span>
+    </div>
+    <div class="row">
+      <label>Opacity</label>
+      <input type="range" id="opacitySlider" min="0" max="1" step="0.01" value="1" />
+      <span class="value" id="opacityValue">100%</span>
+    </div>
+
+    <h2>Canvas</h2>
+    <div class="row">
+      <label>Background</label>
+      <div class="bg-options" style="flex:1;">
+        <button data-bg="checker" class="active">Checker</button>
+        <button data-bg="dark">Dark</button>
+        <button data-bg="light">Light</button>
+      </div>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="crosshair" checked /> Crosshair</label>
+    </div>
+
+    <h2>New Circle</h2>
+    <div class="row">
+      <label>Color</label>
+      <input type="color" id="circleColor" value="#6fb3ff" />
+      <span class="value" id="strokeValue" style="flex:1; text-align:left; color:var(--muted);">Stroke</span>
+    </div>
+    <div class="row">
+      <label>Stroke</label>
+      <input type="range" id="strokeSlider" min="0.5" max="6" step="0.5" value="1" />
+      <span class="value" id="strokeValueNum">1.0</span>
+    </div>
+    <div class="row">
+      <label>Alpha</label>
+      <input type="range" id="alphaSlider" min="0.1" max="1" step="0.05" value="0.6" />
+      <span class="value" id="alphaValue">60%</span>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button id="addCircleBtn" class="accent-outline" style="flex:1;">Add circle</button>
+    </div>
+    <p class="hint">Click <b>Add circle</b>, then move the mouse over the canvas to preview (radius = distance from center). Click to commit, or press <kbd>Esc</kbd> to cancel. Scroll wheel nudges the live radius.</p>
+
+    <h2>Circles</h2>
+    <div class="edit-panel" id="editPanel" style="display:none;">
+      <div class="edit-title">Editing circle <span id="editIdxLabel"></span></div>
+      <div class="row">
+        <label>Radius</label>
+        <input type="range" id="editRadius" min="1" max="600" step="0.5" />
+        <input type="number" id="editRadiusNum" min="1" step="0.5" />
+      </div>
+      <div class="row">
+        <label>Color</label>
+        <input type="color" id="editColor" />
+        <span class="value" style="flex:1;"></span>
+      </div>
+      <div class="row">
+        <label>Stroke</label>
+        <input type="range" id="editStroke" min="0.5" max="6" step="0.5" />
+        <span class="value" id="editStrokeVal"></span>
+      </div>
+      <div class="row">
+        <label>Alpha</label>
+        <input type="range" id="editAlpha" min="0.1" max="1" step="0.05" />
+        <span class="value" id="editAlphaVal"></span>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button id="editDoneBtn" class="primary" style="flex:1;">Done (Esc)</button>
+      </div>
+      <p class="hint" style="margin-top:6px;">Scroll wheel on the canvas nudges the radius by ±1 px.</p>
+    </div>
+    <div class="circle-list" id="circleList"></div>
+    <div class="row" style="margin-top:8px;">
+      <button id="clearBtn" class="danger-outline" style="flex:1;">Clear all</button>
+    </div>
+  </aside>
+
+  <div class="stage" id="stage">
+    <canvas id="canvas"></canvas>
+    <div class="readout" id="readout">—</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const stage = document.getElementById('stage');
+  const readout = document.getElementById('readout');
+
+  const fileInput = document.getElementById('fileInput');
+  const loadBtn = document.getElementById('loadBtn');
+  const scaleSlider = document.getElementById('scaleSlider');
+  const scaleValue = document.getElementById('scaleValue');
+  const opacitySlider = document.getElementById('opacitySlider');
+  const opacityValue = document.getElementById('opacityValue');
+  const crosshairToggle = document.getElementById('crosshair');
+  const circleColor = document.getElementById('circleColor');
+  const strokeSlider = document.getElementById('strokeSlider');
+  const strokeValueNum = document.getElementById('strokeValueNum');
+  const alphaSlider = document.getElementById('alphaSlider');
+  const alphaValue = document.getElementById('alphaValue');
+  const circleList = document.getElementById('circleList');
+  const clearBtn = document.getElementById('clearBtn');
+  const addCircleBtn = document.getElementById('addCircleBtn');
+  const bgButtons = document.querySelectorAll('.bg-options button');
+  const editPanel = document.getElementById('editPanel');
+  const editIdxLabel = document.getElementById('editIdxLabel');
+  const editRadius = document.getElementById('editRadius');
+  const editRadiusNum = document.getElementById('editRadiusNum');
+  const editColor = document.getElementById('editColor');
+  const editStroke = document.getElementById('editStroke');
+  const editStrokeVal = document.getElementById('editStrokeVal');
+  const editAlpha = document.getElementById('editAlpha');
+  const editAlphaVal = document.getElementById('editAlphaVal');
+  const editDoneBtn = document.getElementById('editDoneBtn');
+
+  const state = {
+    image: null,
+    scale: 1,
+    opacity: 1,
+    crosshair: true,
+    bg: 'checker',
+    circles: [],
+    preview: null,
+    previewRadiusOverride: null,
+    nextColor: '#6fb3ff',
+    nextStroke: 1,
+    nextAlpha: 0.6,
+    mode: 'move',                 // 'move' | 'circle'
+    imageOffset: { x: 0, y: 0 },  // offset from canvas center
+    drag: null,                   // { startX, startY, originX, originY }
+    editingIdx: null,             // index into state.circles being edited
+  };
+
+  function setMode(m) {
+    state.mode = m;
+    addCircleBtn.classList.toggle('active', m === 'circle');
+    addCircleBtn.textContent = m === 'circle' ? 'Cancel (Esc)' : 'Add circle';
+    if (m !== 'circle') {
+      state.preview = null;
+      state.previewRadiusOverride = null;
+      readout.textContent = '—';
+    } else {
+      // entering add mode cancels any in-progress edit
+      stopEditing();
+    }
+    updateCursor();
+    draw();
+  }
+
+  function startEditing(idx) {
+    if (idx < 0 || idx >= state.circles.length) return;
+    if (state.mode === 'circle') setMode('move');
+    state.editingIdx = idx;
+    const c = state.circles[idx];
+    // dynamic max for radius: half the smaller canvas dimension, but never less than current
+    const maxR = Math.max(c.radius, Math.floor(Math.min(canvas.clientWidth, canvas.clientHeight) / 2));
+    editRadius.max = maxR;
+    editRadiusNum.max = maxR;
+    editRadius.value = c.radius;
+    editRadiusNum.value = c.radius.toFixed(1);
+    editColor.value = c.color;
+    editStroke.value = c.stroke;
+    editStrokeVal.textContent = c.stroke.toFixed(1);
+    editAlpha.value = c.alpha;
+    editAlphaVal.textContent = Math.round(c.alpha * 100) + '%';
+    editIdxLabel.textContent = '#' + (idx + 1);
+    editPanel.style.display = '';
+    rebuildList();
+    draw();
+  }
+
+  function stopEditing() {
+    if (state.editingIdx == null) return;
+    state.editingIdx = null;
+    editPanel.style.display = 'none';
+    rebuildList();
+    draw();
+  }
+
+  function updateEditing(patch) {
+    if (state.editingIdx == null) return;
+    Object.assign(state.circles[state.editingIdx], patch);
+    rebuildList();
+    draw();
+  }
+
+  function updateCursor() {
+    canvas.classList.remove('mode-move', 'mode-moving', 'mode-circle');
+    if (state.mode === 'circle') {
+      canvas.classList.add('mode-circle');
+    } else if (state.drag) {
+      canvas.classList.add('mode-moving');
+    } else if (state.image) {
+      canvas.classList.add('mode-move');
+    }
+  }
+
+  function resizeCanvas() {
+    const rect = stage.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    canvas.width = Math.floor(rect.width * dpr);
+    canvas.height = Math.floor(rect.height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function centerPx() {
+    const rect = canvas.getBoundingClientRect();
+    return { x: rect.width / 2, y: rect.height / 2 };
+  }
+
+  function applyBackground() {
+    if (state.bg === 'checker') {
+      stage.style.background = '';
+      stage.style.backgroundImage =
+        'linear-gradient(45deg, #1a1b20 25%, transparent 25%),' +
+        'linear-gradient(-45deg, #1a1b20 25%, transparent 25%),' +
+        'linear-gradient(45deg, transparent 75%, #1a1b20 75%),' +
+        'linear-gradient(-45deg, transparent 75%, #1a1b20 75%)';
+      stage.style.backgroundSize = '20px 20px';
+      stage.style.backgroundPosition = '0 0, 0 10px, 10px -10px, -10px 0';
+    } else if (state.bg === 'dark') {
+      stage.style.backgroundImage = 'none';
+      stage.style.background = '#111216';
+    } else {
+      stage.style.backgroundImage = 'none';
+      stage.style.background = '#f4f5f7';
+    }
+  }
+
+  function draw() {
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+    const c = centerPx();
+
+    if (state.image) {
+      const iw = state.image.naturalWidth * state.scale;
+      const ih = state.image.naturalHeight * state.scale;
+      const ix = c.x + state.imageOffset.x - iw / 2;
+      const iy = c.y + state.imageOffset.y - ih / 2;
+      ctx.globalAlpha = state.opacity;
+      ctx.drawImage(state.image, ix, iy, iw, ih);
+      ctx.globalAlpha = 1;
+    }
+
+    for (let i = 0; i < state.circles.length; i++) {
+      drawCircle(state.circles[i], c);
+    }
+
+    if (state.editingIdx != null && state.circles[state.editingIdx]) {
+      const sel = state.circles[state.editingIdx];
+      ctx.save();
+      ctx.strokeStyle = 'rgba(111,179,255,0.9)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, sel.radius + 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, Math.max(1, sel.radius - 4), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    if (state.preview) {
+      drawCircle(state.preview, c, true);
+    }
+
+    if (state.crosshair) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,80,80,0.85)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(c.x - 10, c.y);
+      ctx.lineTo(c.x + 10, c.y);
+      ctx.moveTo(c.x, c.y - 10);
+      ctx.lineTo(c.x, c.y + 10);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawCircle(circle, c, isPreview = false) {
+    ctx.save();
+    ctx.strokeStyle = hexToRgba(circle.color, circle.alpha);
+    ctx.lineWidth = circle.stroke;
+    if (isPreview) {
+      ctx.setLineDash([4, 3]);
+    }
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, circle.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function hexToRgba(hex, a) {
+    const m = hex.replace('#', '');
+    const r = parseInt(m.substring(0, 2), 16);
+    const g = parseInt(m.substring(2, 4), 16);
+    const b = parseInt(m.substring(4, 6), 16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  function rebuildList() {
+    circleList.innerHTML = '';
+    state.circles.forEach((circle, idx) => {
+      const item = document.createElement('div');
+      item.className = 'circle-item' + (idx === state.editingIdx ? ' selected' : '');
+      item.dataset.idx = idx;
+      item.title = 'Click to edit';
+      item.innerHTML = `
+        <div class="swatch" style="background:${hexToRgba(circle.color, circle.alpha)}; border-color:${circle.color};"></div>
+        <span class="radius">r = ${circle.radius.toFixed(1)} px · ⌀ ${(circle.radius * 2).toFixed(1)} px</span>
+        <button class="danger-link" data-idx="${idx}" title="Delete">✕</button>
+      `;
+      circleList.appendChild(item);
+    });
+  }
+
+  // --- Events ---
+  loadBtn.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      state.image = img;
+      state.imageOffset = { x: 0, y: 0 };
+      updateCursor();
+      draw();
+    };
+    img.src = url;
+  });
+
+  scaleSlider.addEventListener('input', (e) => {
+    state.scale = parseFloat(e.target.value);
+    scaleValue.textContent = Math.round(state.scale * 100) + '%';
+    draw();
+  });
+
+  opacitySlider.addEventListener('input', (e) => {
+    state.opacity = parseFloat(e.target.value);
+    opacityValue.textContent = Math.round(state.opacity * 100) + '%';
+    draw();
+  });
+
+  crosshairToggle.addEventListener('change', (e) => {
+    state.crosshair = e.target.checked;
+    draw();
+  });
+
+  circleColor.addEventListener('input', (e) => {
+    state.nextColor = e.target.value;
+  });
+
+  strokeSlider.addEventListener('input', (e) => {
+    state.nextStroke = parseFloat(e.target.value);
+    strokeValueNum.textContent = state.nextStroke.toFixed(1);
+  });
+
+  alphaSlider.addEventListener('input', (e) => {
+    state.nextAlpha = parseFloat(e.target.value);
+    alphaValue.textContent = Math.round(state.nextAlpha * 100) + '%';
+  });
+
+  bgButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      bgButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.bg = btn.dataset.bg;
+      applyBackground();
+    });
+  });
+
+  clearBtn.addEventListener('click', () => {
+    state.circles = [];
+    rebuildList();
+    draw();
+  });
+
+  circleList.addEventListener('click', (e) => {
+    const btn = e.target.closest('button.danger-link');
+    if (btn) {
+      const idx = parseInt(btn.dataset.idx, 10);
+      state.circles.splice(idx, 1);
+      if (state.editingIdx === idx) {
+        stopEditing();
+      } else if (state.editingIdx != null && idx < state.editingIdx) {
+        state.editingIdx -= 1;
+      }
+      rebuildList();
+      draw();
+      return;
+    }
+    const item = e.target.closest('.circle-item');
+    if (!item) return;
+    const idx = parseInt(item.dataset.idx, 10);
+    if (state.editingIdx === idx) {
+      stopEditing();
+    } else {
+      startEditing(idx);
+    }
+  });
+
+  editDoneBtn.addEventListener('click', () => stopEditing());
+
+  editRadius.addEventListener('input', (e) => {
+    const r = parseFloat(e.target.value);
+    editRadiusNum.value = r.toFixed(1);
+    updateEditing({ radius: r });
+  });
+  editRadiusNum.addEventListener('input', (e) => {
+    const r = parseFloat(e.target.value);
+    if (isNaN(r) || r < 1) return;
+    if (r > parseFloat(editRadius.max)) {
+      editRadius.max = r;
+      editRadiusNum.max = r;
+    }
+    editRadius.value = r;
+    updateEditing({ radius: r });
+  });
+  editColor.addEventListener('input', (e) => updateEditing({ color: e.target.value }));
+  editStroke.addEventListener('input', (e) => {
+    const v = parseFloat(e.target.value);
+    editStrokeVal.textContent = v.toFixed(1);
+    updateEditing({ stroke: v });
+  });
+  editAlpha.addEventListener('input', (e) => {
+    const v = parseFloat(e.target.value);
+    editAlphaVal.textContent = Math.round(v * 100) + '%';
+    updateEditing({ alpha: v });
+  });
+
+  function localXY(e) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  addCircleBtn.addEventListener('click', () => {
+    setMode(state.mode === 'circle' ? 'move' : 'circle');
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (state.mode === 'circle') setMode('move');
+    else if (state.editingIdx != null) stopEditing();
+  });
+
+  canvas.addEventListener('mousedown', (e) => {
+    if (state.mode !== 'move' || !state.image) return;
+    const p = localXY(e);
+    state.drag = {
+      startX: p.x,
+      startY: p.y,
+      originX: state.imageOffset.x,
+      originY: state.imageOffset.y,
+    };
+    updateCursor();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (state.drag) {
+      state.drag = null;
+      updateCursor();
+    }
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    const p = localXY(e);
+
+    if (state.drag) {
+      state.imageOffset.x = state.drag.originX + (p.x - state.drag.startX);
+      state.imageOffset.y = state.drag.originY + (p.y - state.drag.startY);
+      readout.textContent = `offset (${state.imageOffset.x.toFixed(0)}, ${state.imageOffset.y.toFixed(0)}) px`;
+      draw();
+      return;
+    }
+
+    if (state.mode !== 'circle') return;
+
+    const c = centerPx();
+    const dx = p.x - c.x;
+    const dy = p.y - c.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const r = state.previewRadiusOverride != null ? state.previewRadiusOverride : dist;
+    state.preview = {
+      radius: r,
+      color: state.nextColor,
+      stroke: state.nextStroke,
+      alpha: state.nextAlpha,
+    };
+    readout.textContent = `r = ${r.toFixed(1)} px · ⌀ ${(r * 2).toFixed(1)} px`;
+    draw();
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    if (state.mode === 'circle') {
+      state.preview = null;
+      state.previewRadiusOverride = null;
+      readout.textContent = '—';
+      draw();
+    }
+  });
+
+  canvas.addEventListener('wheel', (e) => {
+    if (state.mode === 'circle' && state.preview) {
+      e.preventDefault();
+      const base = state.previewRadiusOverride != null ? state.previewRadiusOverride : state.preview.radius;
+      const delta = e.deltaY > 0 ? -1 : 1;
+      state.previewRadiusOverride = Math.max(1, base + delta);
+      state.preview.radius = state.previewRadiusOverride;
+      readout.textContent = `r = ${state.preview.radius.toFixed(1)} px · ⌀ ${(state.preview.radius * 2).toFixed(1)} px (locked)`;
+      draw();
+      return;
+    }
+    if (state.editingIdx != null) {
+      e.preventDefault();
+      const sel = state.circles[state.editingIdx];
+      const delta = e.deltaY > 0 ? -1 : 1;
+      const r = Math.max(1, sel.radius + delta);
+      sel.radius = r;
+      editRadius.value = r;
+      editRadiusNum.value = r.toFixed(1);
+      if (r > parseFloat(editRadius.max)) {
+        editRadius.max = r;
+        editRadiusNum.max = r;
+      }
+      readout.textContent = `editing #${state.editingIdx + 1} · r = ${r.toFixed(1)} px · ⌀ ${(r * 2).toFixed(1)} px`;
+      rebuildList();
+      draw();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('click', () => {
+    if (state.mode !== 'circle' || !state.preview) return;
+    state.circles.push({ ...state.preview });
+    rebuildList();
+    setMode('move');
+  });
+
+  window.addEventListener('resize', resizeCanvas);
+
+  // init
+  applyBackground();
+  updateCursor();
+  resizeCanvas();
+})();
+</script>
+</body>
+</html>
