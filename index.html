@@ -123,7 +123,7 @@
     border-color: var(--accent);
     color: var(--accent);
   }
-  .circle-list {
+  .guide-list {
     margin-top: 8px;
     border: 1px solid var(--border);
     border-radius: 4px;
@@ -131,15 +131,15 @@
     max-height: 240px;
     overflow-y: auto;
   }
-  .circle-list:empty::before {
-    content: "No circles yet. Click the canvas to add one.";
+  .guide-list:empty::before {
+    content: "No guides yet. Click the canvas to add one.";
     display: block;
     padding: 10px;
     color: var(--muted);
     font-size: 11px;
     font-style: italic;
   }
-  .circle-item {
+  .guide-item {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -148,12 +148,12 @@
     font-size: 12px;
     cursor: pointer;
   }
-  .circle-item:hover { background: rgba(111,179,255,0.05); }
-  .circle-item.selected {
+  .guide-item:hover { background: rgba(111,179,255,0.05); }
+  .guide-item.selected {
     background: rgba(111,179,255,0.14);
     box-shadow: inset 3px 0 0 var(--accent);
   }
-  .circle-item:last-child { border-bottom: none; }
+  .guide-item:last-child { border-bottom: none; }
   .edit-panel {
     border: 1px solid var(--accent);
     border-radius: 4px;
@@ -180,41 +180,6 @@
     font-variant-numeric: tabular-nums;
   }
   .edit-panel input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
-  .detection-panel {
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--panel-2);
-    padding: 0;
-    margin-top: 8px;
-    font-size: 11px;
-  }
-  .detection-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--border);
-  }
-  .detection-row:last-child { border-bottom: none; }
-  .detection-row .swatch-small {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    margin-top: 3px;
-  }
-  .detection-row .stats {
-    flex: 1;
-    font-variant-numeric: tabular-nums;
-    color: var(--text);
-    line-height: 1.5;
-  }
-  .detection-row .stats .label {
-    color: var(--muted);
-  }
-  .detection-row .stats .bad {
-    color: #ffb86b;
-  }
   .swatch {
     width: 14px;
     height: 14px;
@@ -222,7 +187,7 @@
     border: 1px solid var(--border);
     flex-shrink: 0;
   }
-  .circle-item .radius {
+  .guide-item .radius {
     flex: 1;
     font-variant-numeric: tabular-nums;
   }
@@ -291,7 +256,7 @@
 <div class="app">
   <aside class="sidebar">
     <h1>Knob Inspector</h1>
-    <p class="hint">Compare a knob image against perfectly round, perfectly centered guide circles.</p>
+    <p class="hint">Compare a knob image against perfectly round, perfectly centered guides.</p>
 
     <h2>Image</h2>
     <button class="primary" id="loadBtn" style="width:100%;">Load knob image…</button>
@@ -321,7 +286,7 @@
       <label><input type="checkbox" id="crosshair" checked /> Crosshair</label>
     </div>
 
-    <h2>New Circle</h2>
+    <h2>New Guide</h2>
     <div class="row">
       <label>Color</label>
       <input type="color" id="circleColor" value="#6fb3ff" />
@@ -338,13 +303,13 @@
       <span class="value" id="alphaValue">60%</span>
     </div>
     <div class="row" style="margin-top:10px;">
-      <button id="addCircleBtn" class="accent-outline" style="flex:1;">Add circle</button>
+      <button id="addGuideBtn" class="accent-outline" style="flex:1;">Add guide</button>
     </div>
-    <p class="hint">Click <b>Add circle</b>, then move the mouse over the canvas to preview (radius = distance from center). Click to commit, or press <kbd>Esc</kbd> to cancel. Scroll wheel nudges the live radius.</p>
+    <p class="hint">Click <b>Add guide</b>, then move the mouse over the canvas to preview (radius = distance from center). Click to commit, or press <kbd>Esc</kbd> to cancel. Scroll wheel nudges the live radius.</p>
 
-    <h2>Circles</h2>
+    <h2>Guides</h2>
     <div class="edit-panel" id="editPanel" style="display:none;">
-      <div class="edit-title">Editing circle <span id="editIdxLabel"></span></div>
+      <div class="edit-title">Editing guide <span id="editIdxLabel"></span></div>
       <div class="row">
         <label>Radius</label>
         <input type="range" id="editRadius" min="1" max="600" step="0.5" />
@@ -370,17 +335,10 @@
       </div>
       <p class="hint" style="margin-top:6px;">Scroll wheel on the canvas nudges the radius by ±1 px.</p>
     </div>
-    <div class="circle-list" id="circleList"></div>
+    <div class="guide-list" id="guideList"></div>
     <div class="row" style="margin-top:8px;">
       <button id="clearBtn" class="danger-outline" style="flex:1;">Clear all</button>
     </div>
-
-    <h2>Detection</h2>
-    <div class="row" style="margin-top:4px;">
-      <button id="detectBtn" class="accent-outline" style="flex:1;">Detect rings</button>
-    </div>
-    <p class="hint">Scans each guide circle's radius for the actual ring edge in the image. Place guides where rings <i>should</i> be, then run detection. Re-run after editing circles or loading a new image.</p>
-    <div class="detection-panel" id="detectionPanel" style="display:none;"></div>
   </aside>
 
   <div class="stage" id="stage">
@@ -408,9 +366,9 @@
   const strokeValueNum = document.getElementById('strokeValueNum');
   const alphaSlider = document.getElementById('alphaSlider');
   const alphaValue = document.getElementById('alphaValue');
-  const circleList = document.getElementById('circleList');
+  const guideList = document.getElementById('guideList');
   const clearBtn = document.getElementById('clearBtn');
-  const addCircleBtn = document.getElementById('addCircleBtn');
+  const addGuideBtn = document.getElementById('addGuideBtn');
   const bgButtons = document.querySelectorAll('.bg-options button');
   const editPanel = document.getElementById('editPanel');
   const editIdxLabel = document.getElementById('editIdxLabel');
@@ -422,8 +380,6 @@
   const editAlpha = document.getElementById('editAlpha');
   const editAlphaVal = document.getElementById('editAlphaVal');
   const editDoneBtn = document.getElementById('editDoneBtn');
-  const detectBtn = document.getElementById('detectBtn');
-  const detectionPanel = document.getElementById('detectionPanel');
 
   const state = {
     image: null,
@@ -431,7 +387,7 @@
     opacity: 1,
     crosshair: true,
     bg: 'checker',
-    circles: [],
+    guides: [],
     preview: null,
     previewRadiusOverride: null,
     nextColor: '#6fb3ff',
@@ -440,17 +396,15 @@
     mode: 'move',                 // 'move' | 'circle'
     imageOffset: { x: 0, y: 0 },  // offset from canvas center
     drag: null,                   // { startX, startY, originX, originY }
-    editingIdx: null,             // index into state.circles being edited
-    gray: null,                   // Float32Array grayscale of the source image
+    editingIdx: null,             // index into state.guides being edited
     imageW: 0,
     imageH: 0,
-    detections: null,             // [{circleIdx, samples_img:[{theta,r_img,x_img,y_img}], outliers_img}]
   };
 
   function setMode(m) {
     state.mode = m;
-    addCircleBtn.classList.toggle('active', m === 'circle');
-    addCircleBtn.textContent = m === 'circle' ? 'Cancel (Esc)' : 'Add circle';
+    addGuideBtn.classList.toggle('active', m === 'circle');
+    addGuideBtn.textContent = m === 'circle' ? 'Cancel (Esc)' : 'Add circle';
     if (m !== 'circle') {
       state.preview = null;
       state.previewRadiusOverride = null;
@@ -464,10 +418,10 @@
   }
 
   function startEditing(idx) {
-    if (idx < 0 || idx >= state.circles.length) return;
+    if (idx < 0 || idx >= state.guides.length) return;
     if (state.mode === 'circle') setMode('move');
     state.editingIdx = idx;
-    const c = state.circles[idx];
+    const c = state.guides[idx];
     // dynamic max for radius: half the smaller canvas dimension, but never less than current
     const maxR = Math.max(c.radius, Math.floor(Math.min(canvas.clientWidth, canvas.clientHeight) / 2));
     editRadius.max = maxR;
@@ -495,7 +449,7 @@
 
   function updateEditing(patch) {
     if (state.editingIdx == null) return;
-    Object.assign(state.circles[state.editingIdx], patch);
+    Object.assign(state.guides[state.editingIdx], patch);
     rebuildList();
     draw();
   }
@@ -562,17 +516,12 @@
       ctx.globalAlpha = 1;
     }
 
-    for (let i = 0; i < state.circles.length; i++) {
-      drawCircle(state.circles[i], c);
+    for (let i = 0; i < state.guides.length; i++) {
+      drawGuide(state.guides[i], c);
     }
 
-    if (state.detections) {
-      drawDetections(c);
-      renderDetectionPanel();
-    }
-
-    if (state.editingIdx != null && state.circles[state.editingIdx]) {
-      const sel = state.circles[state.editingIdx];
+    if (state.editingIdx != null && state.guides[state.editingIdx]) {
+      const sel = state.guides[state.editingIdx];
       ctx.save();
       ctx.strokeStyle = 'rgba(111,179,255,0.9)';
       ctx.lineWidth = 1;
@@ -587,7 +536,7 @@
     }
 
     if (state.preview) {
-      drawCircle(state.preview, c, true);
+      drawGuide(state.preview, c, true);
     }
 
     if (state.crosshair) {
@@ -604,7 +553,7 @@
     }
   }
 
-  function drawCircle(circle, c, isPreview = false) {
+  function drawGuide(circle, c, isPreview = false) {
     ctx.save();
     ctx.strokeStyle = hexToRgba(circle.color, circle.alpha);
     ctx.lineWidth = circle.stroke;
@@ -625,319 +574,12 @@
     return `rgba(${r},${g},${b},${a})`;
   }
 
-  // --- Ring detection ---
-
-  function prepareImageData(img) {
-    const off = document.createElement('canvas');
-    off.width = img.naturalWidth;
-    off.height = img.naturalHeight;
-    const octx = off.getContext('2d');
-    octx.drawImage(img, 0, 0);
-    let data;
-    try {
-      data = octx.getImageData(0, 0, off.width, off.height);
-    } catch (e) {
-      console.warn('Cannot read image pixels (tainted):', e);
-      state.gray = null;
-      return;
-    }
-    const n = off.width * off.height;
-    const gray = new Float32Array(n);
-    const d = data.data;
-    for (let i = 0; i < n; i++) {
-      gray[i] = 0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2];
-    }
-    state.gray = gaussianBlur3(gray, off.width, off.height);
-    state.imageW = off.width;
-    state.imageH = off.height;
-  }
-
-  // Separable 3x3 Gaussian: [1,2,1]/4 horizontal then vertical (~sigma 0.85)
-  function gaussianBlur3(src, w, h) {
-    const tmp = new Float32Array(src.length);
-    const dst = new Float32Array(src.length);
-    for (let y = 0; y < h; y++) {
-      const row = y * w;
-      for (let x = 0; x < w; x++) {
-        const i = row + x;
-        const l = x > 0     ? src[i-1] : src[i];
-        const r = x < w - 1 ? src[i+1] : src[i];
-        tmp[i] = (l + 2 * src[i] + r) * 0.25;
-      }
-    }
-    for (let y = 0; y < h; y++) {
-      const row = y * w;
-      for (let x = 0; x < w; x++) {
-        const i = row + x;
-        const u = y > 0     ? tmp[i-w] : tmp[i];
-        const d2 = y < h - 1 ? tmp[i+w] : tmp[i];
-        dst[i] = (u + 2 * tmp[i] + d2) * 0.25;
-      }
-    }
-    return dst;
-  }
-
-  function sampleGray(x, y) {
-    if (x < 0 || y < 0 || x >= state.imageW - 1 || y >= state.imageH - 1) return null;
-    const x0 = Math.floor(x), y0 = Math.floor(y);
-    const fx = x - x0, fy = y - y0;
-    const w = state.imageW;
-    const i00 = y0 * w + x0;
-    return (
-      state.gray[i00]       * (1-fx)*(1-fy) +
-      state.gray[i00 + 1]   * fx    *(1-fy) +
-      state.gray[i00 + w]   * (1-fx)*fy +
-      state.gray[i00 + w+1] * fx    *fy
-    );
-  }
-
-  function detectEdgeAlongRay(cx, cy, theta, R, search) {
-    const cos = Math.cos(theta), sin = Math.sin(theta);
-    const step = 0.5;
-    const profile = [];
-    for (let t = -search; t <= search; t += step) {
-      const r = R + t;
-      profile.push(sampleGray(cx + r * cos, cy + r * sin));
-    }
-    // 5-tap Gaussian smoothing [1,4,6,4,1]/16
-    const smooth = profile.map((v, i) => {
-      if (v == null) return null;
-      const a = profile[i-2] ?? v;
-      const b = profile[i-1] ?? v;
-      const d = profile[i+1] ?? v;
-      const e = profile[i+2] ?? v;
-      return (a + 4*b + 6*v + 4*d + e) / 16;
-    });
-    let bestI = -1, bestG = 0;
-    for (let i = 1; i < smooth.length; i++) {
-      const a = smooth[i-1], b = smooth[i];
-      if (a == null || b == null) continue;
-      const g = Math.abs(b - a);
-      if (g > bestG) { bestG = g; bestI = i; }
-    }
-    if (bestI < 0) return null;
-    const t = -search + bestI * step - step / 2;
-    return { r: R + t, gradient: bestG };
-  }
-
-  function median(arr) {
-    if (!arr.length) return 0;
-    const s = [...arr].sort((a, b) => a - b);
-    const m = Math.floor(s.length / 2);
-    return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2;
-  }
-
-  // Circular 5-tap Gaussian smoothing of detected ring radii.
-  // Operates on samples sorted by theta; wraps at the seam. Recomputes x/y
-  // from the smoothed radius so the polyline + centroid stay consistent.
-  function smoothRadiiCircular(samples, cx, cy) {
-    const n = samples.length;
-    if (n < 5) return samples;
-    const k = [1, 4, 6, 4, 1];
-    const ksum = 16;
-    const out = new Array(n);
-    for (let i = 0; i < n; i++) {
-      let acc = 0;
-      for (let j = -2; j <= 2; j++) {
-        const idx = ((i + j) % n + n) % n;
-        acc += samples[idx].r_img * k[j + 2];
-      }
-      const r = acc / ksum;
-      const s = samples[i];
-      out[i] = {
-        theta: s.theta,
-        r_img: r,
-        x_img: cx + r * Math.cos(s.theta),
-        y_img: cy + r * Math.sin(s.theta),
-        gradient: s.gradient,
-      };
-    }
-    return out;
-  }
-
-  function detectRings() {
-    if (!state.image) { flashDetect('Load an image first.'); return; }
-    if (!state.gray)  { flashDetect('Image pixels unreadable.'); return; }
-    if (state.circles.length === 0) { flashDetect('Place at least one guide circle first.'); return; }
-
-    const cx_img = (-state.imageOffset.x) / state.scale + state.imageW / 2;
-    const cy_img = (-state.imageOffset.y) / state.scale + state.imageH / 2;
-    const N_ANGLES = 180;
-    const results = [];
-
-    for (let idx = 0; idx < state.circles.length; idx++) {
-      const circle = state.circles[idx];
-      const R_img = circle.radius / state.scale;
-      const search = Math.max(15, R_img * 0.20);
-
-      const raw = [];
-      for (let i = 0; i < N_ANGLES; i++) {
-        const theta = (i / N_ANGLES) * Math.PI * 2;
-        const hit = detectEdgeAlongRay(cx_img, cy_img, theta, R_img, search);
-        if (!hit) continue;
-        raw.push({
-          theta,
-          r_img: hit.r,
-          x_img: cx_img + hit.r * Math.cos(theta),
-          y_img: cy_img + hit.r * Math.sin(theta),
-          gradient: hit.gradient,
-        });
-      }
-
-      if (raw.length === 0) {
-        results.push({ circleIdx: idx, samples_img: [], outliers_img: [] });
-        continue;
-      }
-
-      // weak-gradient filter
-      const maxG = Math.max(...raw.map(s => s.gradient));
-      const gThresh = maxG * 0.18;
-      let strong = raw.filter(s => s.gradient >= gThresh);
-      if (strong.length < 6) strong = raw;
-
-      // radius MAD outlier rejection (kills the indicator pointer / notches)
-      const med = median(strong.map(s => s.r_img));
-      const mad = median(strong.map(s => Math.abs(s.r_img - med)));
-      const rThresh = Math.max(2, 3 * mad);
-      let samples_img = [];
-      const outliers_img = [];
-      for (const s of strong) {
-        if (Math.abs(s.r_img - med) <= rThresh) samples_img.push(s);
-        else outliers_img.push(s);
-      }
-      for (const s of raw) {
-        if (s.gradient < gThresh) outliers_img.push(s);
-      }
-
-      samples_img = smoothRadiiCircular(samples_img, cx_img, cy_img);
-
-      results.push({ circleIdx: idx, samples_img, outliers_img });
-    }
-
-    state.detections = results;
-    renderDetectionPanel();
-    draw();
-  }
-
-  function clearDetections() {
-    if (!state.detections) return;
-    state.detections = null;
-    renderDetectionPanel();
-    draw();
-  }
-
-  function imgToCanvas(x_img, y_img) {
-    const c = centerPx();
-    return {
-      x: c.x + state.imageOffset.x + (x_img - state.imageW / 2) * state.scale,
-      y: c.y + state.imageOffset.y + (y_img - state.imageH / 2) * state.scale,
-    };
-  }
-
-  function statsFor(detection) {
-    if (!detection.samples_img.length) return null;
-    const c = centerPx();
-    const pts = detection.samples_img.map(s => imgToCanvas(s.x_img, s.y_img));
-    const radii = pts.map(p => Math.hypot(p.x - c.x, p.y - c.y));
-    const meanR = radii.reduce((a, b) => a + b, 0) / radii.length;
-    const meanX = pts.reduce((a, p) => a + p.x, 0) / pts.length;
-    const meanY = pts.reduce((a, p) => a + p.y, 0) / pts.length;
-    return {
-      offsetX: meanX - c.x,
-      offsetY: meanY - c.y,
-      meanR,
-      targetR: state.circles[detection.circleIdx]?.radius ?? 0,
-      ovality: (Math.max(...radii) - Math.min(...radii)) / 2,
-      count: pts.length,
-      outliers: detection.outliers_img.length,
-    };
-  }
-
-  function drawDetections(c) {
-    if (!state.detections) return;
-    for (const det of state.detections) {
-      const circle = state.circles[det.circleIdx];
-      if (!circle || det.samples_img.length === 0) continue;
-      const color = circle.color;
-      const pts = det.samples_img.map(s => imgToCanvas(s.x_img, s.y_img));
-
-      // closed polyline through detected samples
-      ctx.save();
-      ctx.strokeStyle = hexToRgba(color, 0.55);
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
-      ctx.closePath();
-      ctx.stroke();
-      ctx.restore();
-
-      // dots
-      ctx.save();
-      ctx.fillStyle = color;
-      for (const p of pts) {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 1.8, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-
-      // detected ring centroid as a small +
-      const s = statsFor(det);
-      if (s) {
-        const cxd = c.x + s.offsetX, cyd = c.y + s.offsetY;
-        ctx.save();
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(cxd - 4, cyd); ctx.lineTo(cxd + 4, cyd);
-        ctx.moveTo(cxd, cyd - 4); ctx.lineTo(cxd, cyd + 4);
-        ctx.stroke();
-        ctx.restore();
-      }
-    }
-  }
-
-  function renderDetectionPanel() {
-    if (!state.detections || state.detections.length === 0) {
-      detectionPanel.style.display = 'none';
-      detectionPanel.innerHTML = '';
-      return;
-    }
-    detectionPanel.style.display = '';
-    const rows = state.detections.map((det, i) => {
-      const circle = state.circles[det.circleIdx];
-      if (!circle) return '';
-      if (!det.samples_img.length) {
-        return `<div class="detection-row">
-          <div class="swatch-small" style="background:${circle.color}"></div>
-          <div class="stats"><b>#${i+1}</b> <span class="bad">no edge detected</span></div>
-        </div>`;
-      }
-      const s = statsFor(det);
-      const rDelta = s.meanR - s.targetR;
-      const offMag = Math.hypot(s.offsetX, s.offsetY);
-      return `<div class="detection-row">
-        <div class="swatch-small" style="background:${circle.color}"></div>
-        <div class="stats">
-          <b>#${i+1}</b> <span class="label">center</span> (${s.offsetX.toFixed(1)}, ${s.offsetY.toFixed(1)}) px · |Δ| ${offMag.toFixed(1)}<br>
-          <span class="label">r</span> ${s.meanR.toFixed(1)} <span class="label">vs target</span> ${s.targetR.toFixed(1)} (Δ ${rDelta>=0?'+':''}${rDelta.toFixed(1)}) · <span class="label">oval</span> ±${s.ovality.toFixed(1)} px<br>
-          <span class="label">${s.count} samples${s.outliers ? ` · ${s.outliers} rejected` : ''}</span>
-        </div>
-      </div>`;
-    }).join('');
-    detectionPanel.innerHTML = rows;
-  }
-
-  function flashDetect(msg) {
-    detectionPanel.style.display = '';
-    detectionPanel.innerHTML = `<div class="detection-row"><div class="stats"><span class="bad">${msg}</span></div></div>`;
-  }
 
   function rebuildList() {
-    circleList.innerHTML = '';
-    state.circles.forEach((circle, idx) => {
+    guideList.innerHTML = '';
+    state.guides.forEach((circle, idx) => {
       const item = document.createElement('div');
-      item.className = 'circle-item' + (idx === state.editingIdx ? ' selected' : '');
+      item.className = 'guide-item' + (idx === state.editingIdx ? ' selected' : '');
       item.dataset.idx = idx;
       item.title = 'Click to edit';
       item.innerHTML = `
@@ -945,7 +587,7 @@
         <span class="radius">r = ${circle.radius.toFixed(1)} px · ⌀ ${(circle.radius * 2).toFixed(1)} px</span>
         <button class="danger-link" data-idx="${idx}" title="Delete">✕</button>
       `;
-      circleList.appendChild(item);
+      guideList.appendChild(item);
     });
   }
 
@@ -960,8 +602,8 @@
     img.onload = () => {
       state.image = img;
       state.imageOffset = { x: 0, y: 0 };
-      prepareImageData(img);
-      clearDetections();
+      state.imageW = img.naturalWidth;
+      state.imageH = img.naturalHeight;
       updateCursor();
       draw();
     };
@@ -1009,31 +651,28 @@
   });
 
   clearBtn.addEventListener('click', () => {
-    state.circles = [];
+    state.guides = [];
     stopEditing();
-    clearDetections();
     rebuildList();
     draw();
   });
 
-  detectBtn.addEventListener('click', () => detectRings());
 
-  circleList.addEventListener('click', (e) => {
+  guideList.addEventListener('click', (e) => {
     const btn = e.target.closest('button.danger-link');
     if (btn) {
       const idx = parseInt(btn.dataset.idx, 10);
-      state.circles.splice(idx, 1);
+      state.guides.splice(idx, 1);
       if (state.editingIdx === idx) {
         stopEditing();
       } else if (state.editingIdx != null && idx < state.editingIdx) {
         state.editingIdx -= 1;
       }
-      clearDetections();
       rebuildList();
       draw();
       return;
     }
-    const item = e.target.closest('.circle-item');
+    const item = e.target.closest('.guide-item');
     if (!item) return;
     const idx = parseInt(item.dataset.idx, 10);
     if (state.editingIdx === idx) {
@@ -1049,7 +688,6 @@
     const r = parseFloat(e.target.value);
     editRadiusNum.value = r.toFixed(1);
     updateEditing({ radius: r });
-    clearDetections();
   });
   editRadiusNum.addEventListener('input', (e) => {
     const r = parseFloat(e.target.value);
@@ -1060,7 +698,6 @@
     }
     editRadius.value = r;
     updateEditing({ radius: r });
-    clearDetections();
   });
   editColor.addEventListener('input', (e) => updateEditing({ color: e.target.value }));
   editStroke.addEventListener('input', (e) => {
@@ -1079,7 +716,7 @@
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
-  addCircleBtn.addEventListener('click', () => {
+  addGuideBtn.addEventListener('click', () => {
     setMode(state.mode === 'circle' ? 'move' : 'circle');
   });
 
@@ -1158,7 +795,7 @@
     }
     if (state.editingIdx != null) {
       e.preventDefault();
-      const sel = state.circles[state.editingIdx];
+      const sel = state.guides[state.editingIdx];
       const delta = e.deltaY > 0 ? -1 : 1;
       const r = Math.max(1, sel.radius + delta);
       sel.radius = r;
@@ -1169,7 +806,6 @@
         editRadiusNum.max = r;
       }
       readout.textContent = `editing #${state.editingIdx + 1} · r = ${r.toFixed(1)} px · ⌀ ${(r * 2).toFixed(1)} px`;
-      clearDetections();
       rebuildList();
       draw();
     }
@@ -1177,8 +813,7 @@
 
   canvas.addEventListener('click', () => {
     if (state.mode !== 'circle' || !state.preview) return;
-    state.circles.push({ ...state.preview });
-    clearDetections();
+    state.guides.push({ ...state.preview });
     rebuildList();
     setMode('move');
   });
