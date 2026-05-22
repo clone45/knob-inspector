@@ -209,9 +209,11 @@
     left: 0;
     cursor: default;
   }
-  canvas.mode-move    { cursor: grab; }
-  canvas.mode-moving  { cursor: grabbing; }
-  canvas.mode-circle  { cursor: crosshair; }
+  canvas.mode-move        { cursor: grab; }
+  canvas.mode-moving      { cursor: grabbing; }
+  canvas.mode-circle      { cursor: crosshair; }
+  canvas.mode-brush-move  { cursor: move; }
+  canvas.mode-brush-warp  { cursor: grabbing; }
   button.active {
     background: var(--accent);
     border-color: var(--accent);
@@ -339,6 +341,36 @@
     <div class="row" style="margin-top:8px;">
       <button id="clearBtn" class="danger-outline" style="flex:1;">Clear all</button>
     </div>
+
+    <h2>Warp Brush</h2>
+    <div class="row" style="margin-top:4px;">
+      <button id="brushToggleBtn" class="accent-outline" style="flex:1;">Enable warp brush</button>
+    </div>
+    <p class="hint">When on, an oval brush appears at the canvas center. Drag the small <b>center handle</b> to reposition; drag <i>elsewhere inside</i> the oval to warp the image along the guides (rails: motion is decomposed into radial / tangential around the canvas center).</p>
+    <div class="row">
+      <label>Width</label>
+      <input type="range" id="brushW" min="20" max="400" step="1" value="120" />
+      <span class="value" id="brushWVal">120</span>
+    </div>
+    <div class="row">
+      <label>Height</label>
+      <input type="range" id="brushH" min="10" max="400" step="1" value="40" />
+      <span class="value" id="brushHVal">40</span>
+    </div>
+    <div class="row">
+      <label>Rotation</label>
+      <input type="range" id="brushRot" min="-180" max="180" step="1" value="0" />
+      <span class="value" id="brushRotVal">0°</span>
+    </div>
+    <div class="row">
+      <label>Strength</label>
+      <input type="range" id="brushStrength" min="0.1" max="1" step="0.05" value="1" />
+      <span class="value" id="brushStrengthVal">100%</span>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <button id="undoBtn" style="flex:1;" disabled>Undo</button>
+      <button id="resetWarpBtn" class="danger-outline" style="flex:1;" disabled>Reset image</button>
+    </div>
   </aside>
 
   <div class="stage" id="stage">
@@ -380,6 +412,17 @@
   const editAlpha = document.getElementById('editAlpha');
   const editAlphaVal = document.getElementById('editAlphaVal');
   const editDoneBtn = document.getElementById('editDoneBtn');
+  const brushToggleBtn = document.getElementById('brushToggleBtn');
+  const brushW = document.getElementById('brushW');
+  const brushWVal = document.getElementById('brushWVal');
+  const brushH = document.getElementById('brushH');
+  const brushHVal = document.getElementById('brushHVal');
+  const brushRot = document.getElementById('brushRot');
+  const brushRotVal = document.getElementById('brushRotVal');
+  const brushStrength = document.getElementById('brushStrength');
+  const brushStrengthVal = document.getElementById('brushStrengthVal');
+  const undoBtn = document.getElementById('undoBtn');
+  const resetWarpBtn = document.getElementById('resetWarpBtn');
 
   const state = {
     image: null,
@@ -399,6 +442,19 @@
     editingIdx: null,             // index into state.guides being edited
     imageW: 0,
     imageH: 0,
+    // Warp brush
+    brushOn: false,
+    brush: {                      // brush position stored in IMAGE coords so it sticks to the knob
+      x_img: 0, y_img: 0,
+      w: 120, h: 40,              // width/height in CANVAS px (oval axes)
+      rot: 0,                     // radians (positive = CCW)
+      strength: 1.0,
+    },
+    brushDrag: null,              // { kind:'move'|'warp', startCanvas:{x,y}, brushStart_img:{x,y}, snapshot:ImageData }
+    workingCanvas: null,          // offscreen canvas holding the current (possibly warped) bitmap
+    workingCtx: null,
+    undoStack: [],                // ImageData snapshots (capped)
+    UNDO_LIMIT: 10,
   };
 
   function setMode(m) {
@@ -454,10 +510,16 @@
     draw();
   }
 
-  function updateCursor() {
-    canvas.classList.remove('mode-move', 'mode-moving', 'mode-circle');
+  function updateCursor(hoverHit) {
+    canvas.classList.remove('mode-move', 'mode-moving', 'mode-circle', 'mode-brush-move', 'mode-brush-warp');
     if (state.mode === 'circle') {
       canvas.classList.add('mode-circle');
+    } else if (state.brushDrag) {
+      canvas.classList.add(state.brushDrag.kind === 'move' ? 'mode-brush-move' : 'mode-brush-warp');
+    } else if (state.brushOn && hoverHit === 'handle') {
+      canvas.classList.add('mode-brush-move');
+    } else if (state.brushOn && hoverHit === 'inside') {
+      canvas.classList.add('mode-brush-warp');
     } else if (state.drag) {
       canvas.classList.add('mode-moving');
     } else if (state.image) {
@@ -506,13 +568,14 @@
     ctx.clearRect(0, 0, w, h);
     const c = centerPx();
 
-    if (state.image) {
-      const iw = state.image.naturalWidth * state.scale;
-      const ih = state.image.naturalHeight * state.scale;
+    const src = state.workingCanvas || state.image;
+    if (src) {
+      const iw = state.imageW * state.scale;
+      const ih = state.imageH * state.scale;
       const ix = c.x + state.imageOffset.x - iw / 2;
       const iy = c.y + state.imageOffset.y - ih / 2;
       ctx.globalAlpha = state.opacity;
-      ctx.drawImage(state.image, ix, iy, iw, ih);
+      ctx.drawImage(src, ix, iy, iw, ih);
       ctx.globalAlpha = 1;
     }
 
@@ -551,6 +614,8 @@
       ctx.stroke();
       ctx.restore();
     }
+
+    if (state.brushOn) drawBrush(c);
   }
 
   function drawGuide(circle, c, isPreview = false) {
@@ -572,6 +637,110 @@
     const g = parseInt(m.substring(2, 4), 16);
     const b = parseInt(m.substring(4, 6), 16);
     return `rgba(${r},${g},${b},${a})`;
+  }
+
+  // --- Warp brush ---
+
+  function imgToCanvas(x_img, y_img) {
+    const c = centerPx();
+    return {
+      x: c.x + state.imageOffset.x + (x_img - state.imageW / 2) * state.scale,
+      y: c.y + state.imageOffset.y + (y_img - state.imageH / 2) * state.scale,
+    };
+  }
+  function canvasToImg(x, y) {
+    const c = centerPx();
+    return {
+      x: (x - c.x - state.imageOffset.x) / state.scale + state.imageW / 2,
+      y: (y - c.y - state.imageOffset.y) / state.scale + state.imageH / 2,
+    };
+  }
+
+  function brushCanvasPos() {
+    return imgToCanvas(state.brush.x_img, state.brush.y_img);
+  }
+
+  // Returns 'handle' | 'inside' | 'outside' for a canvas point relative to the brush.
+  function brushHitTest(cx, cy) {
+    const bc = brushCanvasPos();
+    const dx = cx - bc.x, dy = cy - bc.y;
+    if (dx * dx + dy * dy <= 36) return 'handle';   // 6 px radius center handle
+    // rotate point into brush-local coords
+    const cos = Math.cos(-state.brush.rot), sin = Math.sin(-state.brush.rot);
+    const lx = dx * cos - dy * sin;
+    const ly = dx * sin + dy * cos;
+    const a = state.brush.w / 2, b = state.brush.h / 2;
+    if (a < 1 || b < 1) return 'outside';
+    const e = (lx * lx) / (a * a) + (ly * ly) / (b * b);
+    return e <= 1 ? 'inside' : 'outside';
+  }
+
+  function drawBrush(c) {
+    const bc = brushCanvasPos();
+    ctx.save();
+    ctx.translate(bc.x, bc.y);
+    ctx.rotate(state.brush.rot);
+    ctx.strokeStyle = 'rgba(255, 220, 120, 0.9)';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, state.brush.w / 2, state.brush.h / 2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    // center handle (a small filled disc)
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 220, 120, 0.95)';
+    ctx.strokeStyle = 'rgba(40, 30, 0, 0.8)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(bc.x, bc.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function setBrushEnabled(on) {
+    state.brushOn = on;
+    brushToggleBtn.classList.toggle('active', on);
+    brushToggleBtn.textContent = on ? 'Disable warp brush' : 'Enable warp brush';
+    if (on) {
+      if (state.mode === 'circle') setMode('move');
+      stopEditing();
+      // place at canvas center in image coords if uninitialized
+      if (state.image && state.brush.x_img === 0 && state.brush.y_img === 0) {
+        state.brush.x_img = state.imageW / 2;
+        state.brush.y_img = state.imageH / 2;
+      }
+    }
+    updateCursor();
+    draw();
+  }
+
+  function pushUndoSnapshot() {
+    if (!state.workingCtx) return;
+    const snap = state.workingCtx.getImageData(0, 0, state.imageW, state.imageH);
+    state.undoStack.push(snap);
+    while (state.undoStack.length > state.UNDO_LIMIT) state.undoStack.shift();
+    updateUndoButtons();
+  }
+  function undoLast() {
+    if (!state.undoStack.length || !state.workingCtx) return;
+    const snap = state.undoStack.pop();
+    state.workingCtx.putImageData(snap, 0, 0);
+    updateUndoButtons();
+    draw();
+  }
+  function resetWarp() {
+    if (!state.image || !state.workingCtx) return;
+    state.workingCtx.clearRect(0, 0, state.imageW, state.imageH);
+    state.workingCtx.drawImage(state.image, 0, 0);
+    state.undoStack = [];
+    updateUndoButtons();
+    draw();
+  }
+  function updateUndoButtons() {
+    undoBtn.disabled = state.undoStack.length === 0;
+    resetWarpBtn.disabled = !state.image;
   }
 
 
@@ -604,6 +773,19 @@
       state.imageOffset = { x: 0, y: 0 };
       state.imageW = img.naturalWidth;
       state.imageH = img.naturalHeight;
+      // working canvas mirrors the image and is what we render + warp into
+      const w = document.createElement('canvas');
+      w.width = img.naturalWidth;
+      w.height = img.naturalHeight;
+      const wctx = w.getContext('2d', { willReadFrequently: true });
+      wctx.drawImage(img, 0, 0);
+      state.workingCanvas = w;
+      state.workingCtx = wctx;
+      state.undoStack = [];
+      updateUndoButtons();
+      // center the brush on the image center
+      state.brush.x_img = img.naturalWidth / 2;
+      state.brush.y_img = img.naturalHeight / 2;
       updateCursor();
       draw();
     };
@@ -727,8 +909,35 @@
   });
 
   canvas.addEventListener('mousedown', (e) => {
-    if (state.mode !== 'move' || !state.image) return;
     const p = localXY(e);
+
+    // brush takes priority over image drag when enabled
+    if (state.brushOn && state.image) {
+      const hit = brushHitTest(p.x, p.y);
+      if (hit === 'handle') {
+        state.brushDrag = {
+          kind: 'move',
+          startCanvas: { x: p.x, y: p.y },
+          brushStart_img: { x: state.brush.x_img, y: state.brush.y_img },
+        };
+        updateCursor();
+        return;
+      }
+      if (hit === 'inside') {
+        // warp gesture — snapshot current bitmap, will be filled in next phase
+        pushUndoSnapshot();
+        state.brushDrag = {
+          kind: 'warp',
+          startCanvas: { x: p.x, y: p.y },
+          brushStart_img: { x: state.brush.x_img, y: state.brush.y_img },
+          snapshot: state.workingCtx.getImageData(0, 0, state.imageW, state.imageH),
+        };
+        updateCursor();
+        return;
+      }
+    }
+
+    if (state.mode !== 'move' || !state.image) return;
     state.drag = {
       startX: p.x,
       startY: p.y,
@@ -739,6 +948,11 @@
   });
 
   window.addEventListener('mouseup', () => {
+    if (state.brushDrag) {
+      state.brushDrag = null;
+      updateCursor();
+      draw();
+    }
     if (state.drag) {
       state.drag = null;
       updateCursor();
@@ -748,12 +962,34 @@
   canvas.addEventListener('mousemove', (e) => {
     const p = localXY(e);
 
+    if (state.brushDrag) {
+      const dx = p.x - state.brushDrag.startCanvas.x;
+      const dy = p.y - state.brushDrag.startCanvas.y;
+      if (state.brushDrag.kind === 'move') {
+        // reposition the brush. Convert canvas-delta to image-delta.
+        state.brush.x_img = state.brushDrag.brushStart_img.x + dx / state.scale;
+        state.brush.y_img = state.brushDrag.brushStart_img.y + dy / state.scale;
+        readout.textContent = `brush (${state.brush.x_img.toFixed(0)}, ${state.brush.y_img.toFixed(0)}) px [img]`;
+        draw();
+      } else {
+        // warp gesture — algorithm lands in the next commit
+        readout.textContent = `warp Δ (${dx.toFixed(0)}, ${dy.toFixed(0)}) — algorithm pending`;
+      }
+      return;
+    }
+
     if (state.drag) {
       state.imageOffset.x = state.drag.originX + (p.x - state.drag.startX);
       state.imageOffset.y = state.drag.originY + (p.y - state.drag.startY);
       readout.textContent = `offset (${state.imageOffset.x.toFixed(0)}, ${state.imageOffset.y.toFixed(0)}) px`;
       draw();
       return;
+    }
+
+    // hover cursor for brush
+    if (state.brushOn && state.image) {
+      const hit = brushHitTest(p.x, p.y);
+      updateCursor(hit);
     }
 
     if (state.mode !== 'circle') return;
@@ -820,9 +1056,35 @@
 
   window.addEventListener('resize', resizeCanvas);
 
+  // --- Brush UI wiring ---
+  brushToggleBtn.addEventListener('click', () => setBrushEnabled(!state.brushOn));
+  brushW.addEventListener('input', (e) => {
+    state.brush.w = parseFloat(e.target.value);
+    brushWVal.textContent = state.brush.w.toFixed(0);
+    draw();
+  });
+  brushH.addEventListener('input', (e) => {
+    state.brush.h = parseFloat(e.target.value);
+    brushHVal.textContent = state.brush.h.toFixed(0);
+    draw();
+  });
+  brushRot.addEventListener('input', (e) => {
+    const deg = parseFloat(e.target.value);
+    state.brush.rot = deg * Math.PI / 180;
+    brushRotVal.textContent = deg.toFixed(0) + '°';
+    draw();
+  });
+  brushStrength.addEventListener('input', (e) => {
+    state.brush.strength = parseFloat(e.target.value);
+    brushStrengthVal.textContent = Math.round(state.brush.strength * 100) + '%';
+  });
+  undoBtn.addEventListener('click', () => undoLast());
+  resetWarpBtn.addEventListener('click', () => resetWarp());
+
   // init
   applyBackground();
   updateCursor();
+  updateUndoButtons();
   resizeCanvas();
 })();
 </script>
