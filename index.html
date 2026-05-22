@@ -212,8 +212,9 @@
   canvas.mode-move        { cursor: grab; }
   canvas.mode-moving      { cursor: grabbing; }
   canvas.mode-circle      { cursor: crosshair; }
-  canvas.mode-brush-move  { cursor: move; }
-  canvas.mode-brush-warp  { cursor: grabbing; }
+  canvas.mode-brush-move    { cursor: move; }
+  canvas.mode-brush-warp    { cursor: grabbing; }
+  canvas.mode-brush-resize  { cursor: crosshair; }
   button.active {
     background: var(--accent);
     border-color: var(--accent);
@@ -346,7 +347,7 @@
     <div class="row" style="margin-top:4px;">
       <button id="brushToggleBtn" class="accent-outline" style="flex:1;">Enable warp brush</button>
     </div>
-    <p class="hint">When on, an oval brush appears at the canvas center. Drag the small <b>center handle</b> to reposition; drag <i>elsewhere inside</i> the oval to warp the image along the guides (rails: motion is decomposed into radial / tangential around the canvas center).</p>
+    <p class="hint">When on, an oval brush appears with three handles: <b>center</b> (yellow) to reposition, <b>major-axis end</b> (white) to set width + rotation, <b>minor-axis end</b> (white) to set height. Drag <i>elsewhere inside</i> the oval to warp the image along the guides (rails: motion is decomposed into radial / tangential around the canvas center). Sliders below still work as numeric fallback.</p>
     <div class="row">
       <label>Width</label>
       <input type="range" id="brushW" min="20" max="400" step="1" value="120" />
@@ -511,13 +512,20 @@
   }
 
   function updateCursor(hoverHit) {
-    canvas.classList.remove('mode-move', 'mode-moving', 'mode-circle', 'mode-brush-move', 'mode-brush-warp');
+    canvas.classList.remove('mode-move', 'mode-moving', 'mode-circle', 'mode-brush-move', 'mode-brush-warp', 'mode-brush-resize');
     if (state.mode === 'circle') {
       canvas.classList.add('mode-circle');
     } else if (state.brushDrag) {
-      canvas.classList.add(state.brushDrag.kind === 'move' ? 'mode-brush-move' : 'mode-brush-warp');
+      const k = state.brushDrag.kind;
+      canvas.classList.add(
+        k === 'warp' ? 'mode-brush-warp' :
+        k === 'move' ? 'mode-brush-move' :
+        'mode-brush-resize'
+      );
     } else if (state.brushOn && hoverHit === 'handle') {
       canvas.classList.add('mode-brush-move');
+    } else if (state.brushOn && (hoverHit === 'major' || hoverHit === 'minor')) {
+      canvas.classList.add('mode-brush-resize');
     } else if (state.brushOn && hoverHit === 'inside') {
       canvas.classList.add('mode-brush-warp');
     } else if (state.drag) {
@@ -660,12 +668,23 @@
     return imgToCanvas(state.brush.x_img, state.brush.y_img);
   }
 
-  // Returns 'handle' | 'inside' | 'outside' for a canvas point relative to the brush.
+  // Returns 'handle' | 'major' | 'minor' | 'inside' | 'outside'.
   function brushHitTest(cx, cy) {
     const bc = brushCanvasPos();
     const dx = cx - bc.x, dy = cy - bc.y;
-    if (dx * dx + dy * dy <= 36) return 'handle';   // 6 px radius center handle
-    // rotate point into brush-local coords
+    // Center handle (highest priority — sits at geometric center)
+    if (dx * dx + dy * dy <= 36) return 'handle';
+    // Reshape handles at the ends of the major and minor axes
+    const ca = Math.cos(state.brush.rot), sa = Math.sin(state.brush.rot);
+    const majX = (state.brush.w / 2) * ca;
+    const majY = (state.brush.w / 2) * sa;
+    const minX = (state.brush.h / 2) * -sa;
+    const minY = (state.brush.h / 2) * ca;
+    const mdx = dx - majX, mdy = dy - majY;
+    if (mdx * mdx + mdy * mdy <= 49) return 'major';   // 7 px hit radius
+    const ndx = dx - minX, ndy = dy - minY;
+    if (ndx * ndx + ndy * ndy <= 49) return 'minor';
+    // Inside check (rotated ellipse)
     const cos = Math.cos(-state.brush.rot), sin = Math.sin(-state.brush.rot);
     const lx = dx * cos - dy * sin;
     const ly = dx * sin + dy * cos;
@@ -687,13 +706,27 @@
     ctx.ellipse(0, 0, state.brush.w / 2, state.brush.h / 2, 0, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
-    // center handle (a small filled disc)
+
+    // Reshape handles at major and minor axis endpoints
+    const ca = Math.cos(state.brush.rot), sa = Math.sin(state.brush.rot);
+    const majX = bc.x + (state.brush.w / 2) * ca;
+    const majY = bc.y + (state.brush.w / 2) * sa;
+    const minX = bc.x + (state.brush.h / 2) * -sa;
+    const minY = bc.y + (state.brush.h / 2) * ca;
+    drawHandleDot(majX, majY, 'rgba(255, 255, 255, 0.95)');
+    drawHandleDot(minX, minY, 'rgba(255, 255, 255, 0.95)');
+
+    // Center handle (yellow, slightly bigger)
+    drawHandleDot(bc.x, bc.y, 'rgba(255, 220, 120, 0.95)', 5);
+  }
+
+  function drawHandleDot(x, y, fill, r = 4) {
     ctx.save();
-    ctx.fillStyle = 'rgba(255, 220, 120, 0.95)';
-    ctx.strokeStyle = 'rgba(40, 30, 0, 0.8)';
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = 'rgba(40, 30, 0, 0.85)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(bc.x, bc.y, 5, 0, Math.PI * 2);
+    ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.restore();
@@ -1050,6 +1083,11 @@
         updateCursor();
         return;
       }
+      if (hit === 'major' || hit === 'minor') {
+        state.brushDrag = { kind: hit };
+        updateCursor();
+        return;
+      }
       if (hit === 'inside') {
         // snapshot current bitmap — warp samples from this each frame
         state.brushDrag = {
@@ -1089,14 +1127,47 @@
     const p = localXY(e);
 
     if (state.brushDrag) {
-      const dx = p.x - state.brushDrag.startCanvas.x;
-      const dy = p.y - state.brushDrag.startCanvas.y;
-      if (state.brushDrag.kind === 'move') {
+      const kind = state.brushDrag.kind;
+      if (kind === 'move') {
+        const dx = p.x - state.brushDrag.startCanvas.x;
+        const dy = p.y - state.brushDrag.startCanvas.y;
         state.brush.x_img = state.brushDrag.brushStart_img.x + dx / state.scale;
         state.brush.y_img = state.brushDrag.brushStart_img.y + dy / state.scale;
         readout.textContent = `brush (${state.brush.x_img.toFixed(0)}, ${state.brush.y_img.toFixed(0)}) px [img]`;
         draw();
-      } else {
+      } else if (kind === 'major') {
+        const bc = brushCanvasPos();
+        const dx = p.x - bc.x, dy = p.y - bc.y;
+        const len = Math.hypot(dx, dy);
+        if (len >= 5) {
+          let w = Math.max(20, 2 * len);
+          if (w > parseFloat(brushW.max)) brushW.max = w;
+          state.brush.w = w;
+          state.brush.rot = Math.atan2(dy, dx);
+          brushW.value = w;
+          brushWVal.textContent = w.toFixed(0);
+          const deg = state.brush.rot * 180 / Math.PI;
+          brushRot.value = deg;
+          brushRotVal.textContent = deg.toFixed(0) + '°';
+          readout.textContent = `w ${w.toFixed(0)} px · rot ${deg.toFixed(0)}°`;
+        }
+        draw();
+      } else if (kind === 'minor') {
+        const bc = brushCanvasPos();
+        const dx = p.x - bc.x, dy = p.y - bc.y;
+        // project onto the perpendicular-to-major direction
+        const perpX = -Math.sin(state.brush.rot), perpY = Math.cos(state.brush.rot);
+        const proj = Math.abs(dx * perpX + dy * perpY);
+        let h = Math.max(10, 2 * proj);
+        if (h > parseFloat(brushH.max)) brushH.max = h;
+        state.brush.h = h;
+        brushH.value = h;
+        brushHVal.textContent = h.toFixed(0);
+        readout.textContent = `h ${h.toFixed(0)} px`;
+        draw();
+      } else if (kind === 'warp') {
+        const dx = p.x - state.brushDrag.startCanvas.x;
+        const dy = p.y - state.brushDrag.startCanvas.y;
         readout.textContent = `warp Δ (${dx.toFixed(1)}, ${dy.toFixed(1)}) px`;
         applyWarpAt(p.x, p.y);
       }
