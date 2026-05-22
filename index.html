@@ -716,9 +716,7 @@
     draw();
   }
 
-  function pushUndoSnapshot() {
-    if (!state.workingCtx) return;
-    const snap = state.workingCtx.getImageData(0, 0, state.imageW, state.imageH);
+  function pushUndo(snap) {
     state.undoStack.push(snap);
     while (state.undoStack.length > state.UNDO_LIMIT) state.undoStack.shift();
     updateUndoButtons();
@@ -741,6 +739,135 @@
   function updateUndoButtons() {
     undoBtn.disabled = state.undoStack.length === 0;
     resetWarpBtn.disabled = !state.image;
+  }
+
+  // Rails warp: each frame, re-warp from the gesture's snapshot using the
+  // current drag delta. Decompose drag at the brush position into radial /
+  // tangential around the canvas center, then for each pixel inside the
+  // brush ellipse apply that decomposition in the pixel's own polar frame
+  // with falloff. Backward-warp + bilinear sampling from snapshot.
+  function applyWarpAt(currentX, currentY) {
+    const drag = state.brushDrag;
+    if (!drag || drag.kind !== 'warp' || !drag.snapshot || !state.workingCtx) return;
+
+    const dx_canvas = currentX - drag.startCanvas.x;
+    const dy_canvas = currentY - drag.startCanvas.y;
+    if (Math.abs(dx_canvas) < 0.5 && Math.abs(dy_canvas) < 0.5) {
+      // tiny / zero drag — just restore snapshot
+      state.workingCtx.putImageData(drag.snapshot, 0, 0);
+      draw();
+      return;
+    }
+
+    // First non-trivial movement of this gesture? Commit the snapshot to undo.
+    if (!drag.committed) {
+      pushUndo(drag.snapshot);
+      drag.committed = true;
+    }
+
+    const W = state.imageW, H = state.imageH;
+    const dx_img = dx_canvas / state.scale;
+    const dy_img = dy_canvas / state.scale;
+
+    // Canvas center mapped into image-pixel space
+    const cx_img = (-state.imageOffset.x) / state.scale + W / 2;
+    const cy_img = (-state.imageOffset.y) / state.scale + H / 2;
+
+    // Brush position (already image coords)
+    const bx = state.brush.x_img;
+    const by = state.brush.y_img;
+    const bdx = bx - cx_img;
+    const bdy = by - cy_img;
+    const blen = Math.sqrt(bdx * bdx + bdy * bdy);
+
+    // Rails frame at brush. If brush is essentially at the canvas center the
+    // polar frame is degenerate — fall back to plain translation under the
+    // brush so the user still gets a useful tool there.
+    const useRails = blen >= 5;
+    let d_r = 0, d_t = 0, cos_b = 1, sin_b = 0;
+    if (useRails) {
+      cos_b = bdx / blen;
+      sin_b = bdy / blen;
+      d_r = dx_img * cos_b + dy_img * sin_b;
+      d_t = -dx_img * sin_b + dy_img * cos_b;
+    }
+
+    const strength = state.brush.strength;
+    const a = (state.brush.w * 0.5) / state.scale;
+    const b = (state.brush.h * 0.5) / state.scale;
+    if (a < 1 || b < 1) return;
+    const cos_rot = Math.cos(-state.brush.rot);
+    const sin_rot = Math.sin(-state.brush.rot);
+    const cosR = Math.cos(state.brush.rot), sinR = Math.sin(state.brush.rot);
+    const bbW = Math.sqrt(a*a * cosR*cosR + b*b * sinR*sinR);
+    const bbH = Math.sqrt(a*a * sinR*sinR + b*b * cosR*cosR);
+    const x0 = Math.max(0, Math.floor(bx - bbW) - 1);
+    const y0 = Math.max(0, Math.floor(by - bbH) - 1);
+    const x1 = Math.min(W - 1, Math.ceil(bx + bbW) + 1);
+    const y1 = Math.min(H - 1, Math.ceil(by + bbH) + 1);
+
+    const src = drag.snapshot.data;
+    const dst = new Uint8ClampedArray(src);   // start as snapshot copy
+    const invA2 = 1 / (a * a);
+    const invB2 = 1 / (b * b);
+    const Wm1 = W - 1, Hm1 = H - 1;
+
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const lx = x - bx, ly = y - by;
+        const lxL = lx * cos_rot - ly * sin_rot;
+        const lyL = lx * sin_rot + ly * cos_rot;
+        const d2 = lxL * lxL * invA2 + lyL * lyL * invB2;
+        if (d2 > 1) continue;
+        const fd = Math.sqrt(d2);
+        // cosine bell falloff: 1 at center, 0 at ellipse edge
+        const f = strength * 0.5 * (1 + Math.cos(fd * Math.PI));
+        if (f <= 0) continue;
+
+        let disp_x, disp_y;
+        if (useRails) {
+          const px = x - cx_img, py = y - cy_img;
+          const plen = Math.sqrt(px * px + py * py);
+          let cos_p, sin_p;
+          if (plen < 1) { cos_p = cos_b; sin_p = sin_b; }
+          else          { cos_p = px / plen; sin_p = py / plen; }
+          disp_x = f * (d_r * cos_p - d_t * sin_p);
+          disp_y = f * (d_r * sin_p + d_t * cos_p);
+        } else {
+          disp_x = f * dx_img;
+          disp_y = f * dy_img;
+        }
+
+        // backward warp: sample snapshot at (x - disp, y - disp)
+        const sx = x - disp_x;
+        const sy = y - disp_y;
+        const idx = (y * W + x) * 4;
+
+        // bilinear with clamp
+        const csx = sx < 0 ? 0 : sx > Wm1 ? Wm1 : sx;
+        const csy = sy < 0 ? 0 : sy > Hm1 ? Hm1 : sy;
+        const sx0 = csx | 0, sy0 = csy | 0;
+        const fx = csx - sx0, fy = csy - sy0;
+        const sx1 = sx0 < Wm1 ? sx0 + 1 : sx0;
+        const sy1 = sy0 < Hm1 ? sy0 + 1 : sy0;
+        const i00 = (sy0 * W + sx0) * 4;
+        const i10 = (sy0 * W + sx1) * 4;
+        const i01 = (sy1 * W + sx0) * 4;
+        const i11 = (sy1 * W + sx1) * 4;
+        const w00 = (1 - fx) * (1 - fy);
+        const w10 = fx * (1 - fy);
+        const w01 = (1 - fx) * fy;
+        const w11 = fx * fy;
+        dst[idx    ] = src[i00    ] * w00 + src[i10    ] * w10 + src[i01    ] * w01 + src[i11    ] * w11;
+        dst[idx + 1] = src[i00 + 1] * w00 + src[i10 + 1] * w10 + src[i01 + 1] * w01 + src[i11 + 1] * w11;
+        dst[idx + 2] = src[i00 + 2] * w00 + src[i10 + 2] * w10 + src[i01 + 2] * w01 + src[i11 + 2] * w11;
+        dst[idx + 3] = src[i00 + 3] * w00 + src[i10 + 3] * w10 + src[i01 + 3] * w01 + src[i11 + 3] * w11;
+      }
+    }
+
+    const out = new ImageData(dst, W, H);
+    state.workingCtx.putImageData(out, 0, 0);
+    draw();
   }
 
 
@@ -924,13 +1051,12 @@
         return;
       }
       if (hit === 'inside') {
-        // warp gesture — snapshot current bitmap, will be filled in next phase
-        pushUndoSnapshot();
+        // snapshot current bitmap — warp samples from this each frame
         state.brushDrag = {
           kind: 'warp',
           startCanvas: { x: p.x, y: p.y },
-          brushStart_img: { x: state.brush.x_img, y: state.brush.y_img },
           snapshot: state.workingCtx.getImageData(0, 0, state.imageW, state.imageH),
+          committed: false,
         };
         updateCursor();
         return;
@@ -966,14 +1092,13 @@
       const dx = p.x - state.brushDrag.startCanvas.x;
       const dy = p.y - state.brushDrag.startCanvas.y;
       if (state.brushDrag.kind === 'move') {
-        // reposition the brush. Convert canvas-delta to image-delta.
         state.brush.x_img = state.brushDrag.brushStart_img.x + dx / state.scale;
         state.brush.y_img = state.brushDrag.brushStart_img.y + dy / state.scale;
         readout.textContent = `brush (${state.brush.x_img.toFixed(0)}, ${state.brush.y_img.toFixed(0)}) px [img]`;
         draw();
       } else {
-        // warp gesture — algorithm lands in the next commit
-        readout.textContent = `warp Δ (${dx.toFixed(0)}, ${dy.toFixed(0)}) — algorithm pending`;
+        readout.textContent = `warp Δ (${dx.toFixed(1)}, ${dy.toFixed(1)}) px`;
+        applyWarpAt(p.x, p.y);
       }
       return;
     }
